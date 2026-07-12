@@ -28,7 +28,7 @@ export const signupSchema = z
     email,
     password,
   })
-  .strict("Role and other account fields cannot be selected at signup.");
+  .strict();
 
 export const loginSchema = z.object({ email, password: z.string().min(1) });
 
