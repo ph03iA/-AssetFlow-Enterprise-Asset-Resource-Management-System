@@ -1,4 +1,5 @@
 import { DomainError } from "./errors";
+import { BookingStatus } from "../generated/prisma/enums";
 
 export type BookingInterval = {
   startAt: Date;
@@ -38,4 +39,22 @@ export function findBookingConflict(
   return existingIntervals.find((existing) =>
     bookingIntervalsOverlap(existing, requested),
   );
+}
+
+export function deriveBookingStatus(
+  booking: BookingInterval & { status: BookingStatus },
+  now = new Date(),
+) {
+  assertValidBookingInterval(booking);
+
+  if (booking.status === BookingStatus.CANCELLED) {
+    return BookingStatus.CANCELLED;
+  }
+  if (booking.endAt <= now) {
+    return BookingStatus.COMPLETED;
+  }
+  if (booking.startAt <= now) {
+    return BookingStatus.ONGOING;
+  }
+  return BookingStatus.UPCOMING;
 }

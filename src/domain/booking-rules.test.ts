@@ -3,8 +3,10 @@ import { describe, expect, it } from "vitest";
 import {
   assertValidBookingInterval,
   bookingIntervalsOverlap,
+  deriveBookingStatus,
   findBookingConflict,
 } from "./booking-rules";
+import { BookingStatus } from "../generated/prisma/enums";
 
 function interval(start: string, end: string) {
   return { startAt: new Date(start), endAt: new Date(end) };
@@ -76,5 +78,51 @@ describe("resource booking overlap", () => {
     );
 
     expect(findBookingConflict([nineToTen], requested)).toEqual(nineToTen);
+  });
+});
+
+describe("resource booking operational status", () => {
+  const now = new Date("2026-07-13T10:00:00.000Z");
+
+  it("moves a booking through upcoming, ongoing, and completed boundaries", () => {
+    expect(
+      deriveBookingStatus(
+        {
+          ...interval("2026-07-13T11:00:00.000Z", "2026-07-13T12:00:00.000Z"),
+          status: BookingStatus.UPCOMING,
+        },
+        now,
+      ),
+    ).toBe(BookingStatus.UPCOMING);
+    expect(
+      deriveBookingStatus(
+        {
+          ...interval("2026-07-13T10:00:00.000Z", "2026-07-13T11:00:00.000Z"),
+          status: BookingStatus.UPCOMING,
+        },
+        now,
+      ),
+    ).toBe(BookingStatus.ONGOING);
+    expect(
+      deriveBookingStatus(
+        {
+          ...interval("2026-07-13T09:00:00.000Z", "2026-07-13T10:00:00.000Z"),
+          status: BookingStatus.ONGOING,
+        },
+        now,
+      ),
+    ).toBe(BookingStatus.COMPLETED);
+  });
+
+  it("keeps cancellation as the terminal state", () => {
+    expect(
+      deriveBookingStatus(
+        {
+          ...interval("2026-07-13T09:00:00.000Z", "2026-07-13T12:00:00.000Z"),
+          status: BookingStatus.CANCELLED,
+        },
+        now,
+      ),
+    ).toBe(BookingStatus.CANCELLED);
   });
 });
