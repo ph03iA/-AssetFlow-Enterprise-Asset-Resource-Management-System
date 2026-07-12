@@ -9,7 +9,7 @@ This matrix is the release contract derived from the assignment. A row is comple
 | AUTH-01 | Public signup creates an active Employee account and exposes no role selector. | Signup integration test confirms `EMPLOYEE`; attempted role injection is ignored or rejected. |
 | AUTH-02 | Users can log in with email/password, log out, and retain a validated session. | Authentication tests plus a protected-route browser scenario. |
 | AUTH-03 | Forgot-password flow issues a time-limited, single-use reset token. | Token expiry and single-use tests; browser reset scenario. |
-| AUTH-04 | Only Admin can assign Admin, Asset Manager, or Department Head roles from the Employee Directory. | Authorization tests for allowed and denied promotions. |
+| AUTH-04 | Only Admin can promote Employees to Asset Manager or Department Head from the Employee Directory; Admin itself is bootstrap-only and cannot be self-assigned. | Authorization tests for allowed/denied promotions and rejection of Admin assignment. |
 | AUTH-05 | Inactive accounts and users lacking a required role are denied server-side. | Session and permission tests returning the correct redirect/forbidden result. |
 
 ## Dashboard
@@ -95,7 +95,7 @@ This matrix is the release contract derived from the assignment. A row is comple
 
 | Role | Required capabilities |
 | --- | --- |
-| Admin | Organization setup, employee role assignment, audit-cycle management, organization-wide analytics and logs. |
+| Admin | Organization setup, Employee-to-Manager/Head promotion, audit-cycle management, organization-wide analytics and logs. |
 | Asset Manager | Register/allocate assets; approve transfers, maintenance, discrepancy resolutions, and return condition notes. |
 | Department Head | View department assets; approve in-department allocation/transfer requests; book for the department. |
 | Employee | View assigned assets; book resources; raise maintenance requests; initiate returns and transfers. |
