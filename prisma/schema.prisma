@@ -25,6 +25,46 @@ enum MailStatus {
   FAILED
 }
 
+enum AssetStatus {
+  AVAILABLE
+  ALLOCATED
+  RESERVED
+  UNDER_MAINTENANCE
+  LOST
+  RETIRED
+  DISPOSED
+}
+
+enum AssetCondition {
+  NEW
+  GOOD
+  FAIR
+  DAMAGED
+  POOR
+}
+
+enum AllocationStatus {
+  ACTIVE
+  RETURNED
+  TRANSFERRED
+  CANCELLED
+}
+
+enum TransferStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  COMPLETED
+  CANCELLED
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
 model Organization {
   id             String          @id @default(cuid())
   name           String
@@ -35,6 +75,8 @@ model Organization {
   users          User[]
   departments    Department[]
   categories     AssetCategory[]
+  assets         Asset[]
+  assetTagCounter AssetTagCounter?
   createdAt      DateTime        @default(now())
   updatedAt      DateTime        @updatedAt
 }
@@ -53,6 +95,9 @@ model Department {
   headId         String?        @unique
   head           User?          @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
   members        User[]         @relation("DepartmentMembers")
+  assets         Asset[]
+  allocations    AssetAllocation[]
+  transferTargets TransferRequest[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -70,6 +115,7 @@ model AssetCategory {
   description      String?
   isActive         Boolean      @default(true)
   fieldDefinitions String       @default("[]")
+  assets           Asset[]
   createdAt        DateTime     @default(now())
   updatedAt        DateTime     @updatedAt
 
@@ -93,6 +139,15 @@ model User {
   sessions            Session[]
   passwordResetTokens PasswordResetToken[]
   mailOutbox           MailOutbox[]
+  directAllocations    AssetAllocation[]    @relation("AllocationAssignee")
+  createdAllocations   AssetAllocation[]    @relation("AllocationCreator")
+  closedAllocations    AssetAllocation[]    @relation("AllocationCloser")
+  statusChanges        AssetStatusHistory[] @relation("AssetStatusActor")
+  requestedTransfers   TransferRequest[]    @relation("TransferRequester")
+  targetTransfers      TransferRequest[]    @relation("TransferTargetUser")
+  decidedTransfers     TransferRequest[]    @relation("TransferDecider")
+  requestedReturns     ReturnRequest[]      @relation("ReturnRequester")
+  decidedReturns       ReturnRequest[]      @relation("ReturnDecider")
   lastLoginAt         DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -137,4 +192,138 @@ model MailOutbox {
 
   @@index([recipient, createdAt])
   @@index([status, createdAt])
+}
+
+model AssetTagCounter {
+  organizationId String       @id
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  value          Int          @default(0)
+  updatedAt      DateTime     @updatedAt
+}
+
+model Asset {
+  id                String               @id @default(cuid())
+  organizationId    String
+  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  categoryId        String
+  category          AssetCategory        @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  departmentId      String?
+  department        Department?           @relation(fields: [departmentId], references: [id], onDelete: SetNull)
+  assetTag          String               @unique
+  qrValue           String               @unique
+  name              String
+  serialNumber      String?              @unique
+  description       String?
+  acquisitionDate   DateTime?
+  acquisitionCost   Decimal?
+  condition         AssetCondition       @default(GOOD)
+  location          String
+  status            AssetStatus          @default(AVAILABLE)
+  isBookable        Boolean              @default(false)
+  customValues      String               @default("{}")
+  nextMaintenanceAt DateTime?
+  retirementDate    DateTime?
+  statusHistory     AssetStatusHistory[]
+  allocations       AssetAllocation[]
+  transferRequests  TransferRequest[]
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([organizationId, status])
+  @@index([categoryId, status])
+  @@index([departmentId])
+  @@index([location])
+  @@index([name])
+}
+
+model AssetStatusHistory {
+  id         String       @id @default(cuid())
+  assetId    String
+  asset      Asset        @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  fromStatus AssetStatus?
+  toStatus   AssetStatus
+  reason     String
+  actorId    String?
+  actor      User?        @relation("AssetStatusActor", fields: [actorId], references: [id], onDelete: SetNull)
+  createdAt  DateTime     @default(now())
+
+  @@index([assetId, createdAt])
+  @@index([actorId])
+}
+
+model AssetAllocation {
+  id                   String            @id @default(cuid())
+  assetId              String
+  asset                Asset             @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  assigneeUserId       String?
+  assigneeUser         User?             @relation("AllocationAssignee", fields: [assigneeUserId], references: [id], onDelete: Restrict)
+  assigneeDepartmentId String?
+  assigneeDepartment   Department?       @relation(fields: [assigneeDepartmentId], references: [id], onDelete: Restrict)
+  expectedReturnAt     DateTime?
+  allocatedAt          DateTime          @default(now())
+  returnedAt           DateTime?
+  checkoutCondition    AssetCondition
+  checkoutNotes        String?
+  returnCondition      AssetCondition?
+  returnNotes          String?
+  status               AllocationStatus  @default(ACTIVE)
+  createdById          String
+  createdBy            User              @relation("AllocationCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  closedById           String?
+  closedBy             User?             @relation("AllocationCloser", fields: [closedById], references: [id], onDelete: SetNull)
+  transferRequests     TransferRequest[]
+  returnRequests       ReturnRequest[]
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+
+  @@index([assetId, status])
+  @@index([assigneeUserId, status])
+  @@index([assigneeDepartmentId, status])
+  @@index([expectedReturnAt, status])
+}
+
+model TransferRequest {
+  id                 String         @id @default(cuid())
+  assetId            String
+  asset              Asset          @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  allocationId       String
+  allocation         AssetAllocation @relation(fields: [allocationId], references: [id], onDelete: Restrict)
+  requestedById      String
+  requestedBy        User           @relation("TransferRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  targetUserId       String?
+  targetUser         User?          @relation("TransferTargetUser", fields: [targetUserId], references: [id], onDelete: Restrict)
+  targetDepartmentId String?
+  targetDepartment   Department?    @relation(fields: [targetDepartmentId], references: [id], onDelete: Restrict)
+  reason             String
+  status             TransferStatus @default(REQUESTED)
+  decidedById        String?
+  decidedBy          User?          @relation("TransferDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decisionNotes      String?
+  decidedAt          DateTime?
+  createdAt          DateTime       @default(now())
+  updatedAt          DateTime       @updatedAt
+
+  @@index([assetId, status])
+  @@index([allocationId, status])
+  @@index([requestedById, status])
+}
+
+model ReturnRequest {
+  id              String         @id @default(cuid())
+  allocationId    String
+  allocation      AssetAllocation @relation(fields: [allocationId], references: [id], onDelete: Restrict)
+  requestedById   String
+  requestedBy     User           @relation("ReturnRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  condition       AssetCondition
+  checkInNotes    String
+  status          ReturnStatus   @default(REQUESTED)
+  decidedById     String?
+  decidedBy       User?          @relation("ReturnDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+  decisionNotes   String?
+  decidedAt       DateTime?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@index([allocationId, status])
+  @@index([requestedById, status])
 }
