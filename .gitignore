@@ -24,6 +24,9 @@
 .DS_Store
 *.pem
 
+# local assignment reference (requirements are tracked in docs/)
+/task.pdf
+
 # debug
 npm-debug.log*
 yarn-debug.log*
