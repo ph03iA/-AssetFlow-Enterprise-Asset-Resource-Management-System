@@ -22,10 +22,10 @@
 
 # generated database client and local SQLite data
 /src/generated/prisma
-/data/*.db
-/data/*.db-journal
-/data/*.db-shm
-/data/*.db-wal
+/prisma/data/*.db
+/prisma/data/*.db-journal
+/prisma/data/*.db-shm
+/prisma/data/*.db-wal
 
 # misc
 .DS_Store
