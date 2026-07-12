@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 
 import { AppShell } from "@/components/app/app-shell";
+import { reconcileBookingOperationalState } from "@/features/bookings/service";
 import { requireUser } from "@/server/auth/session";
 import { db } from "@/server/db";
 
@@ -12,6 +13,7 @@ export default async function ProtectedAppLayout({
   children: ReactNode;
 }) {
   const user = await requireUser();
+  await reconcileBookingOperationalState(user.organizationId);
   const unreadNotifications = await db.notification.count({
     where: { userId: user.id, readAt: null },
   });
