@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { Role, UserStatus } from "@/generated/prisma/enums";
+import { Role, UserStatus } from "../../generated/prisma/enums";
 
 const optionalId = z
   .string()

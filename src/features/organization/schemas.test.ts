@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { Role, UserStatus } from "@/generated/prisma/enums";
+import { Role, UserStatus } from "../../generated/prisma/enums";
 import {
   categoryInputSchema,
   departmentInputSchema,
