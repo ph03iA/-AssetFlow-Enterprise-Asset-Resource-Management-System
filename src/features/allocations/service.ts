@@ -6,6 +6,7 @@ import {
   AllocationStatus,
   AssetStatus,
   NotificationType,
+  PendingCustodyAction,
   ReturnStatus,
   Role,
   TransferStatus,
@@ -36,6 +37,34 @@ function allocationScope(actor: PermissionActor): Prisma.AssetAllocationWhereInp
     };
   }
   return { ...organizationScope, assigneeUserId: actor.id };
+}
+
+function transferRequestScope(
+  actor: PermissionActor,
+): Prisma.TransferRequestWhereInput {
+  const organizationScope = { asset: { organizationId: actor.organizationId } };
+
+  if (actor.role === Role.ADMIN || actor.role === Role.ASSET_MANAGER) {
+    return organizationScope;
+  }
+  if (actor.role === Role.DEPARTMENT_HEAD && actor.departmentId) {
+    return {
+      ...organizationScope,
+      OR: [
+        {
+          allocation: {
+            OR: [
+              { assigneeDepartmentId: actor.departmentId },
+              { assigneeUser: { departmentId: actor.departmentId } },
+            ],
+          },
+        },
+        { targetDepartmentId: actor.departmentId },
+        { targetUser: { departmentId: actor.departmentId } },
+      ],
+    };
+  }
+  return { ...organizationScope, requestedById: actor.id };
 }
 
 function holderName(allocation: {
@@ -130,10 +159,7 @@ export async function getAllocationWorkspace(actor: PermissionActor) {
       },
     }),
     db.transferRequest.findMany({
-      where: {
-        allocation: scope,
-        ...(actor.role === Role.EMPLOYEE ? { requestedById: actor.id } : {}),
-      },
+      where: transferRequestScope(actor),
       take: 30,
       orderBy: { createdAt: "desc" },
       include: {
@@ -234,6 +260,77 @@ export async function getAllocationOptions(
   return { assets, employees, departments, preferredAsset };
 }
 
+export async function getCustodyTargets(actor: PermissionActor) {
+  if (!canAct(actor, "transfers.request") && !canAct(actor, "returns.request")) {
+    throw new DomainError("You cannot manage custody requests.", "FORBIDDEN");
+  }
+
+  const departmentFilter =
+    actor.role === Role.DEPARTMENT_HEAD ? actor.departmentId : undefined;
+  const [employees, departments] = await Promise.all([
+    db.user.findMany({
+      where: {
+        organizationId: actor.organizationId,
+        status: UserStatus.ACTIVE,
+        ...(departmentFilter ? { departmentId: departmentFilter } : {}),
+      },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        department: { select: { name: true } },
+      },
+    }),
+    db.department.findMany({
+      where: {
+        organizationId: actor.organizationId,
+        isActive: true,
+        ...(departmentFilter ? { id: departmentFilter } : {}),
+      },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true },
+    }),
+  ]);
+
+  return { employees, departments };
+}
+
+export async function getAllocationDetail(
+  actor: PermissionActor,
+  allocationId: string,
+) {
+  if (!canAct(actor, "assets.read")) {
+    throw new DomainError("You cannot view allocations.", "FORBIDDEN");
+  }
+
+  return db.assetAllocation.findFirst({
+    where: { id: allocationId, ...allocationScope(actor) },
+    include: {
+      asset: { include: { category: true, department: true } },
+      assigneeUser: { include: { department: true } },
+      assigneeDepartment: true,
+      createdBy: { select: { name: true } },
+      closedBy: { select: { name: true } },
+      transferRequests: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          requestedBy: { select: { name: true } },
+          targetUser: { select: { name: true } },
+          targetDepartment: { select: { name: true } },
+          decidedBy: { select: { name: true } },
+        },
+      },
+      returnRequests: {
+        orderBy: { createdAt: "desc" },
+        include: {
+          requestedBy: { select: { name: true } },
+          decidedBy: { select: { name: true } },
+        },
+      },
+    },
+  });
+}
+
 export async function allocateAsset(
   actor: PermissionActor,
   input: AllocationInput,
@@ -288,6 +385,19 @@ export async function allocateAsset(
 
   try {
     return await db.$transaction(async (transaction) => {
+      const assetClaim = await transaction.asset.updateMany({
+        where: { id: asset.id, status: AssetStatus.AVAILABLE },
+        data: {
+          status: AssetStatus.ALLOCATED,
+          departmentId: target.targetDepartmentId ?? asset.departmentId,
+        },
+      });
+      if (assetClaim.count !== 1) {
+        throw new DomainError(
+          `${asset.assetTag} is no longer available. Refresh the directory and try again.`,
+          "ASSET_ALREADY_ALLOCATED",
+        );
+      }
       const allocation = await transaction.assetAllocation.create({
         data: {
           assetId: asset.id,
@@ -297,13 +407,6 @@ export async function allocateAsset(
           checkoutCondition: asset.condition,
           checkoutNotes: input.checkoutNotes || null,
           createdById: actor.id,
-        },
-      });
-      await transaction.asset.update({
-        where: { id: asset.id },
-        data: {
-          status: AssetStatus.ALLOCATED,
-          departmentId: target.targetDepartmentId ?? asset.departmentId,
         },
       });
       await transaction.assetStatusHistory.create({
@@ -398,27 +501,48 @@ export async function requestTransfer(
 
   const target = await validateTarget(actor, input.targetUserId, input.targetDepartmentId);
   if (
-    input.targetUserId === allocation.assigneeUserId ||
-    input.targetDepartmentId === allocation.assigneeDepartmentId
+    (input.targetUserId && input.targetUserId === allocation.assigneeUserId) ||
+    (input.targetDepartmentId &&
+      input.targetDepartmentId === allocation.assigneeDepartmentId)
   ) {
     throw new DomainError("Choose a different transfer target.", "SAME_TARGET");
   }
 
+  const approverDepartmentIds = new Set(
+    [sourceDepartmentId, target.targetDepartmentId].filter(
+      (departmentId): departmentId is string => Boolean(departmentId),
+    ),
+  );
   const approvers = await db.user.findMany({
     where: {
       organizationId: actor.organizationId,
       status: UserStatus.ACTIVE,
       OR: [
         { role: Role.ASSET_MANAGER },
-        ...(sourceDepartmentId
-          ? [{ role: Role.DEPARTMENT_HEAD, departmentId: sourceDepartmentId }]
-          : []),
+        ...[...approverDepartmentIds].map((departmentId) => ({
+          role: Role.DEPARTMENT_HEAD,
+          departmentId,
+        })),
       ],
     },
     select: { id: true },
   });
 
   return db.$transaction(async (transaction) => {
+    const custodyClaim = await transaction.assetAllocation.updateMany({
+      where: {
+        id: allocation.id,
+        status: AllocationStatus.ACTIVE,
+        pendingCustodyAction: null,
+      },
+      data: { pendingCustodyAction: PendingCustodyAction.TRANSFER },
+    });
+    if (custodyClaim.count !== 1) {
+      throw new DomainError(
+        "A transfer or return request is already pending for this asset.",
+        "CUSTODY_REQUEST_PENDING",
+      );
+    }
     const request = await transaction.transferRequest.create({
       data: {
         assetId: allocation.asset.id,
@@ -429,17 +553,26 @@ export async function requestTransfer(
         reason: input.reason,
       },
     });
-    if (approvers.length) {
+    const notificationRecipients = new Set(
+      approvers.map((approver) => approver.id),
+    );
+    if (
+      allocation.assigneeUserId &&
+      allocation.assigneeUserId !== actor.id
+    ) {
+      notificationRecipients.add(allocation.assigneeUserId);
+    }
+    if (notificationRecipients.size) {
       await transaction.notification.createMany({
-        data: approvers.map((approver) => ({
-          userId: approver.id,
+        data: [...notificationRecipients].map((userId) => ({
+          userId,
           type: NotificationType.TRANSFER_REQUESTED,
           title: `Transfer requested for ${allocation.asset.assetTag}`,
           body: `${allocation.asset.name} needs a custody decision.`,
           entityType: "transfer",
           entityId: request.id,
           actionUrl: "/allocations?tab=transfers",
-          dedupeKey: `transfer:${request.id}:requested:${approver.id}`,
+          dedupeKey: `transfer:${request.id}:requested:${userId}`,
         })),
       });
     }
@@ -487,23 +620,47 @@ export async function decideTransfer(
   if (
     actor.role === Role.DEPARTMENT_HEAD &&
     actor.departmentId !== sourceDepartmentId &&
-    actor.departmentId !== request.targetDepartmentId
+    actor.departmentId !== request.targetDepartmentId &&
+    actor.departmentId !== request.targetUser?.departmentId
   ) {
     throw new DomainError("This transfer is outside your department.", "OUT_OF_SCOPE");
   }
 
   const now = new Date();
   return db.$transaction(async (transaction) => {
+    const requestClaim = await transaction.transferRequest.updateMany({
+      where: { id: request.id, status: TransferStatus.REQUESTED },
+      data: {
+        status: input.approved
+          ? TransferStatus.APPROVED
+          : TransferStatus.REJECTED,
+        decidedById: actor.id,
+        decisionNotes: input.decisionNotes || null,
+        decidedAt: now,
+      },
+    });
+    if (requestClaim.count !== 1) {
+      throw new DomainError(
+        "This transfer request has already been decided.",
+        "REQUEST_ALREADY_DECIDED",
+      );
+    }
+
     if (!input.approved) {
-      const rejected = await transaction.transferRequest.update({
-        where: { id: request.id },
-        data: {
-          status: TransferStatus.REJECTED,
-          decidedById: actor.id,
-          decisionNotes: input.decisionNotes || null,
-          decidedAt: now,
+      const release = await transaction.assetAllocation.updateMany({
+        where: {
+          id: request.allocationId,
+          status: AllocationStatus.ACTIVE,
+          pendingCustodyAction: PendingCustodyAction.TRANSFER,
         },
+        data: { pendingCustodyAction: null },
       });
+      if (release.count !== 1) {
+        throw new DomainError(
+          "Custody changed while this request was open. Refresh and review the current record.",
+          "STALE_CUSTODY_REQUEST",
+        );
+      }
       await transaction.notification.create({
         data: {
           userId: request.requestedById,
@@ -516,43 +673,107 @@ export async function decideTransfer(
           dedupeKey: `transfer:${request.id}:rejected`,
         },
       });
-      return rejected;
+      await transaction.activityLog.create({
+        data: {
+          organizationId: actor.organizationId,
+          actorId: actor.id,
+          action: "transfer.rejected",
+          entityType: "transfer",
+          entityId: request.id,
+        },
+      });
+      return transaction.transferRequest.findUniqueOrThrow({
+        where: { id: request.id },
+      });
     }
 
-    await transaction.assetAllocation.update({
-      where: { id: request.allocationId },
+    const [targetUser, targetDepartment] = await Promise.all([
+      request.targetUserId
+        ? transaction.user.findFirst({
+            where: {
+              id: request.targetUserId,
+              organizationId: actor.organizationId,
+              status: UserStatus.ACTIVE,
+            },
+            select: { id: true, name: true, departmentId: true },
+          })
+        : Promise.resolve(null),
+      request.targetDepartmentId
+        ? transaction.department.findFirst({
+            where: {
+              id: request.targetDepartmentId,
+              organizationId: actor.organizationId,
+              isActive: true,
+            },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve(null),
+    ]);
+    if (
+      (request.targetUserId && !targetUser) ||
+      (request.targetDepartmentId && !targetDepartment)
+    ) {
+      throw new DomainError(
+        "The proposed custodian is no longer active in this organization.",
+        "INVALID_ASSIGNEE",
+      );
+    }
+
+    const allocationTransition = await transaction.assetAllocation.updateMany({
+      where: {
+        id: request.allocationId,
+        status: AllocationStatus.ACTIVE,
+        pendingCustodyAction: PendingCustodyAction.TRANSFER,
+      },
       data: {
         status: AllocationStatus.TRANSFERRED,
+        pendingCustodyAction: null,
         returnedAt: now,
         closedById: actor.id,
         returnNotes: `Transferred: ${input.decisionNotes || request.reason}`,
       },
     });
+    if (allocationTransition.count !== 1) {
+      throw new DomainError(
+        "Custody changed while this request was open. Refresh and review the current record.",
+        "STALE_CUSTODY_REQUEST",
+      );
+    }
     const newAllocation = await transaction.assetAllocation.create({
       data: {
         assetId: request.assetId,
         assigneeUserId: request.targetUserId,
         assigneeDepartmentId: request.targetDepartmentId,
+        expectedReturnAt: request.allocation.expectedReturnAt,
         checkoutCondition: request.asset.condition,
         checkoutNotes: `Transfer from allocation ${request.allocationId}`,
         createdById: actor.id,
       },
     });
-    await transaction.asset.update({
-      where: { id: request.assetId },
+    const assetTransition = await transaction.asset.updateMany({
+      where: { id: request.assetId, status: AssetStatus.ALLOCATED },
       data: {
         departmentId:
           request.targetDepartmentId ??
-          request.targetUser?.departmentId ??
+          targetUser?.departmentId ??
           request.asset.departmentId,
       },
     });
-    const approved = await transaction.transferRequest.update({
-      where: { id: request.id },
+    if (assetTransition.count !== 1) {
+      throw new DomainError(
+        "The asset is no longer in an allocated state.",
+        "STALE_ASSET_STATE",
+      );
+    }
+    await transaction.returnRequest.updateMany({
+      where: {
+        allocationId: request.allocationId,
+        status: ReturnStatus.REQUESTED,
+      },
       data: {
-        status: TransferStatus.APPROVED,
+        status: ReturnStatus.CANCELLED,
         decidedById: actor.id,
-        decisionNotes: input.decisionNotes || null,
+        decisionNotes: "Cancelled because the custody transfer was approved.",
         decidedAt: now,
       },
     });
@@ -561,7 +782,7 @@ export async function decideTransfer(
         assetId: request.assetId,
         fromStatus: AssetStatus.ALLOCATED,
         toStatus: AssetStatus.ALLOCATED,
-        reason: `Custody transferred to ${request.targetUser?.name ?? request.targetDepartment?.name}`,
+        reason: `Custody transferred to ${targetUser?.name ?? targetDepartment?.name}`,
         actorId: actor.id,
       },
     });
@@ -591,7 +812,9 @@ export async function decideTransfer(
         metadata: JSON.stringify({ newAllocationId: newAllocation.id }),
       },
     });
-    return approved;
+    return transaction.transferRequest.findUniqueOrThrow({
+      where: { id: request.id },
+    });
   });
 }
 
@@ -608,11 +831,23 @@ export async function requestReturn(
       status: AllocationStatus.ACTIVE,
       asset: { organizationId: actor.organizationId },
     },
-    include: { asset: { select: { assetTag: true, name: true } } },
+    include: {
+      asset: { select: { id: true, assetTag: true, name: true } },
+      assigneeUser: { select: { departmentId: true } },
+    },
   });
   if (!allocation) throw new DomainError("Active allocation not found.", "NOT_FOUND");
   if (actor.role === Role.EMPLOYEE && allocation.assigneeUserId !== actor.id) {
     throw new DomainError("Only the current holder can request this return.", "FORBIDDEN");
+  }
+  if (actor.role === Role.DEPARTMENT_HEAD) {
+    const sourceDepartmentId =
+      allocation.assigneeDepartmentId ??
+      allocation.assigneeUser?.departmentId ??
+      null;
+    if (!sourceDepartmentId || !canAccessDepartment(actor, sourceDepartmentId)) {
+      throw new DomainError("This allocation is outside your department.", "OUT_OF_SCOPE");
+    }
   }
 
   const managers = await db.user.findMany({
@@ -625,6 +860,20 @@ export async function requestReturn(
   });
 
   return db.$transaction(async (transaction) => {
+    const custodyClaim = await transaction.assetAllocation.updateMany({
+      where: {
+        id: allocation.id,
+        status: AllocationStatus.ACTIVE,
+        pendingCustodyAction: null,
+      },
+      data: { pendingCustodyAction: PendingCustodyAction.RETURN },
+    });
+    if (custodyClaim.count !== 1) {
+      throw new DomainError(
+        "A transfer or return request is already pending for this asset.",
+        "CUSTODY_REQUEST_PENDING",
+      );
+    }
     const request = await transaction.returnRequest.create({
       data: {
         allocationId: allocation.id,
@@ -633,20 +882,38 @@ export async function requestReturn(
         checkInNotes: input.checkInNotes,
       },
     });
-    if (managers.length) {
+    const notificationRecipients = new Set(
+      managers.map((manager) => manager.id),
+    );
+    if (
+      allocation.assigneeUserId &&
+      allocation.assigneeUserId !== actor.id
+    ) {
+      notificationRecipients.add(allocation.assigneeUserId);
+    }
+    if (notificationRecipients.size) {
       await transaction.notification.createMany({
-        data: managers.map((manager) => ({
-          userId: manager.id,
+        data: [...notificationRecipients].map((userId) => ({
+          userId,
           type: NotificationType.RETURN_REQUESTED,
           title: `Return requested for ${allocation.asset.assetTag}`,
           body: `${allocation.asset.name} needs a condition check-in decision.`,
           entityType: "return",
           entityId: request.id,
           actionUrl: "/allocations?tab=returns",
-          dedupeKey: `return:${request.id}:requested:${manager.id}`,
+          dedupeKey: `return:${request.id}:requested:${userId}`,
         })),
       });
     }
+    await transaction.activityLog.create({
+      data: {
+        organizationId: actor.organizationId,
+        actorId: actor.id,
+        action: "return.requested",
+        entityType: "return",
+        entityId: request.id,
+      },
+    });
     return request;
   });
 }
@@ -672,16 +939,37 @@ export async function decideReturn(
   const now = new Date();
 
   return db.$transaction(async (transaction) => {
+    const requestClaim = await transaction.returnRequest.updateMany({
+      where: { id: request.id, status: ReturnStatus.REQUESTED },
+      data: {
+        status: input.approved ? ReturnStatus.APPROVED : ReturnStatus.REJECTED,
+        decidedById: actor.id,
+        decisionNotes: input.decisionNotes || null,
+        decidedAt: now,
+      },
+    });
+    if (requestClaim.count !== 1) {
+      throw new DomainError(
+        "This return request has already been decided.",
+        "REQUEST_ALREADY_DECIDED",
+      );
+    }
+
     if (!input.approved) {
-      const rejected = await transaction.returnRequest.update({
-        where: { id: request.id },
-        data: {
-          status: ReturnStatus.REJECTED,
-          decidedById: actor.id,
-          decisionNotes: input.decisionNotes || null,
-          decidedAt: now,
+      const release = await transaction.assetAllocation.updateMany({
+        where: {
+          id: request.allocationId,
+          status: AllocationStatus.ACTIVE,
+          pendingCustodyAction: PendingCustodyAction.RETURN,
         },
+        data: { pendingCustodyAction: null },
       });
+      if (release.count !== 1) {
+        throw new DomainError(
+          "Custody changed while this request was open. Refresh and review the current record.",
+          "STALE_CUSTODY_REQUEST",
+        );
+      }
       await transaction.notification.create({
         data: {
           userId: request.requestedById,
@@ -694,32 +982,66 @@ export async function decideReturn(
           dedupeKey: `return:${request.id}:rejected`,
         },
       });
-      return rejected;
+      await transaction.activityLog.create({
+        data: {
+          organizationId: actor.organizationId,
+          actorId: actor.id,
+          action: "return.rejected",
+          entityType: "return",
+          entityId: request.id,
+        },
+      });
+      return transaction.returnRequest.findUniqueOrThrow({
+        where: { id: request.id },
+      });
     }
 
-    await transaction.assetAllocation.update({
-      where: { id: request.allocationId },
+    const allocationTransition = await transaction.assetAllocation.updateMany({
+      where: {
+        id: request.allocationId,
+        status: AllocationStatus.ACTIVE,
+        pendingCustodyAction: PendingCustodyAction.RETURN,
+      },
       data: {
         status: AllocationStatus.RETURNED,
+        pendingCustodyAction: null,
         returnedAt: now,
         returnCondition: request.condition,
         returnNotes: request.checkInNotes,
         closedById: actor.id,
       },
     });
-    await transaction.asset.update({
-      where: { id: request.allocation.assetId },
+    if (allocationTransition.count !== 1) {
+      throw new DomainError(
+        "Custody changed while this request was open. Refresh and review the current record.",
+        "STALE_CUSTODY_REQUEST",
+      );
+    }
+    const assetTransition = await transaction.asset.updateMany({
+      where: {
+        id: request.allocation.assetId,
+        status: AssetStatus.ALLOCATED,
+      },
       data: {
         status: AssetStatus.AVAILABLE,
         condition: request.condition,
       },
     });
-    const approved = await transaction.returnRequest.update({
-      where: { id: request.id },
+    if (assetTransition.count !== 1) {
+      throw new DomainError(
+        "The asset is no longer in an allocated state.",
+        "STALE_ASSET_STATE",
+      );
+    }
+    await transaction.transferRequest.updateMany({
+      where: {
+        allocationId: request.allocationId,
+        status: TransferStatus.REQUESTED,
+      },
       data: {
-        status: ReturnStatus.APPROVED,
+        status: TransferStatus.CANCELLED,
         decidedById: actor.id,
-        decisionNotes: input.decisionNotes || null,
+        decisionNotes: "Cancelled because the asset return was approved.",
         decidedAt: now,
       },
     });
@@ -753,6 +1075,8 @@ export async function decideReturn(
         entityId: request.id,
       },
     });
-    return approved;
+    return transaction.returnRequest.findUniqueOrThrow({
+      where: { id: request.id },
+    });
   });
 }

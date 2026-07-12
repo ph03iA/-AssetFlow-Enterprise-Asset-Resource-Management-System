@@ -155,6 +155,7 @@ CREATE TABLE "AssetAllocation" (
     "returnCondition" TEXT,
     "returnNotes" TEXT,
     "status" TEXT NOT NULL DEFAULT 'ACTIVE',
+    "pendingCustodyAction" TEXT,
     "createdById" TEXT NOT NULL,
     "closedById" TEXT,
     "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -164,7 +165,8 @@ CREATE TABLE "AssetAllocation" (
     CONSTRAINT "AssetAllocation_assigneeDepartmentId_fkey" FOREIGN KEY ("assigneeDepartmentId") REFERENCES "Department" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "AssetAllocation_createdById_fkey" FOREIGN KEY ("createdById") REFERENCES "User" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
     CONSTRAINT "AssetAllocation_closedById_fkey" FOREIGN KEY ("closedById") REFERENCES "User" ("id") ON DELETE SET NULL ON UPDATE CASCADE,
-    CONSTRAINT "AssetAllocation_exactly_one_assignee" CHECK (("assigneeUserId" IS NOT NULL) <> ("assigneeDepartmentId" IS NOT NULL))
+    CONSTRAINT "AssetAllocation_exactly_one_assignee" CHECK (("assigneeUserId" IS NOT NULL) <> ("assigneeDepartmentId" IS NOT NULL)),
+    CONSTRAINT "AssetAllocation_valid_pending_custody_action" CHECK ("pendingCustodyAction" IS NULL OR "pendingCustodyAction" IN ('TRANSFER', 'RETURN'))
 );
 
 -- CreateTable

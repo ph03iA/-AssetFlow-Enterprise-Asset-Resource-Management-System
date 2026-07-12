@@ -50,6 +50,11 @@ enum AllocationStatus {
   CANCELLED
 }
 
+enum PendingCustodyAction {
+  TRANSFER
+  RETURN
+}
+
 enum TransferStatus {
   REQUESTED
   APPROVED
@@ -351,6 +356,7 @@ model AssetAllocation {
   returnCondition      AssetCondition?
   returnNotes          String?
   status               AllocationStatus  @default(ACTIVE)
+  pendingCustodyAction PendingCustodyAction?
   createdById          String
   createdBy            User              @relation("AllocationCreator", fields: [createdById], references: [id], onDelete: Restrict)
   closedById           String?

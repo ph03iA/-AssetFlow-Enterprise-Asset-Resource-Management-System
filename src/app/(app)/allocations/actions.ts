@@ -28,12 +28,33 @@ function splitTarget(value: FormDataEntryValue | null) {
 }
 
 function validationFailure(error: {
-  flatten(): { fieldErrors: ActionState["fieldErrors"] };
+  flatten(): {
+    fieldErrors: ActionState["fieldErrors"];
+    formErrors: string[];
+  };
 }): ActionState {
+  const flattened = error.flatten();
   return {
     success: false,
-    message: "Review the highlighted fields and try again.",
-    fieldErrors: error.flatten().fieldErrors,
+    message:
+      flattened.formErrors[0] ??
+      "Review the highlighted fields and try again.",
+    fieldErrors: flattened.fieldErrors,
+  };
+}
+
+function parseDecision(formData: FormData) {
+  const value = formData.get("decision");
+  if (value === "approve") return true;
+  if (value === "reject") return false;
+  return null;
+}
+
+function missingDecision(): ActionState {
+  return {
+    success: false,
+    message: "Choose Approve or Reject to record a decision.",
+    fieldErrors: { decision: ["Choose Approve or Reject."] },
   };
 }
 
@@ -99,9 +120,11 @@ export async function decideTransferAction(
   formData: FormData,
 ): Promise<ActionState> {
   const actor = await requireUser();
+  const approved = parseDecision(formData);
+  if (approved === null) return missingDecision();
   const parsed = decisionInputSchema.safeParse({
     requestId: formData.get("requestId"),
-    approved: formData.get("decision") === "approve",
+    approved,
     decisionNotes: formData.get("decisionNotes") ?? "",
   });
 
@@ -146,9 +169,11 @@ export async function decideReturnAction(
   formData: FormData,
 ): Promise<ActionState> {
   const actor = await requireUser();
+  const approved = parseDecision(formData);
+  if (approved === null) return missingDecision();
   const parsed = decisionInputSchema.safeParse({
     requestId: formData.get("requestId"),
-    approved: formData.get("decision") === "approve",
+    approved,
     decisionNotes: formData.get("decisionNotes") ?? "",
   });
 

@@ -17,7 +17,10 @@ export const assigneeSchema = z
   })
   .refine(
     (value) => Boolean(value.assigneeUserId) !== Boolean(value.assigneeDepartmentId),
-    { message: "Choose exactly one employee or department." },
+    {
+      message: "Choose exactly one employee or department.",
+      path: ["assignee"],
+    },
   );
 
 export const allocationInputSchema = z
@@ -39,7 +42,7 @@ export const transferInputSchema = z
   })
   .refine(
     (value) => Boolean(value.targetUserId) !== Boolean(value.targetDepartmentId),
-    { message: "Choose exactly one transfer target." },
+    { message: "Choose exactly one transfer target.", path: ["target"] },
   );
 
 export const returnRequestInputSchema = z.object({
