@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 type FieldShellProps = {
   label: string;
   name: string;
+  controlId?: string;
   hint?: string;
   error?: string;
   children: ReactNode;
@@ -18,15 +19,17 @@ type FieldShellProps = {
 function FieldShell({
   label,
   name,
+  controlId,
   hint,
   error,
   children,
 }: FieldShellProps) {
-  const descriptionId = hint || error ? `${name}-description` : undefined;
+  const resolvedId = controlId ?? name;
+  const descriptionId = hint || error ? `${resolvedId}-description` : undefined;
 
   return (
     <div className="grid min-w-0 gap-2">
-      <label htmlFor={name} className="text-sm font-semibold text-[#26332c]">
+      <label htmlFor={resolvedId} className="text-sm font-semibold text-[#26332c]">
         {label}
       </label>
       {children}
@@ -56,16 +59,17 @@ export function InputField({
   name,
   hint,
   error,
+  id,
   className,
   ...props
 }: InputFieldProps) {
   return (
-    <FieldShell label={label} name={name} hint={hint} error={error}>
+    <FieldShell label={label} name={name} controlId={id} hint={hint} error={error}>
       <input
-        id={name}
+        id={id ?? name}
         name={name}
         aria-invalid={Boolean(error)}
-        aria-describedby={hint || error ? `${name}-description` : undefined}
+        aria-describedby={hint || error ? `${id ?? name}-description` : undefined}
         className={cn(controlClassName, className)}
         {...props}
       />
@@ -84,17 +88,18 @@ export function SelectField({
   name,
   hint,
   error,
+  id,
   className,
   children,
   ...props
 }: SelectFieldProps) {
   return (
-    <FieldShell label={label} name={name} hint={hint} error={error}>
+    <FieldShell label={label} name={name} controlId={id} hint={hint} error={error}>
       <select
-        id={name}
+        id={id ?? name}
         name={name}
         aria-invalid={Boolean(error)}
-        aria-describedby={hint || error ? `${name}-description` : undefined}
+        aria-describedby={hint || error ? `${id ?? name}-description` : undefined}
         className={cn(controlClassName, className)}
         {...props}
       >
@@ -115,16 +120,17 @@ export function TextareaField({
   name,
   hint,
   error,
+  id,
   className,
   ...props
 }: TextareaFieldProps) {
   return (
-    <FieldShell label={label} name={name} hint={hint} error={error}>
+    <FieldShell label={label} name={name} controlId={id} hint={hint} error={error}>
       <textarea
-        id={name}
+        id={id ?? name}
         name={name}
         aria-invalid={Boolean(error)}
-        aria-describedby={hint || error ? `${name}-description` : undefined}
+        aria-describedby={hint || error ? `${id ?? name}-description` : undefined}
         className={cn(controlClassName, "min-h-28 resize-y py-3", className)}
         {...props}
       />
