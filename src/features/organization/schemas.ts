@@ -64,6 +64,7 @@ export const employeeUpdateSchema = z.object({
 });
 
 export type DepartmentInput = z.infer<typeof departmentInputSchema>;
+export type CategoryField = z.infer<typeof categoryFieldDefinitionSchema>;
 export type CategoryInput = z.infer<typeof categoryInputSchema>;
 export type EmployeeUpdateInput = z.infer<typeof employeeUpdateSchema>;
 

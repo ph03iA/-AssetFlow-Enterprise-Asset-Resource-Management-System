@@ -10,14 +10,8 @@ import {
 import { FormFeedback } from "@/components/auth/form-feedback";
 import { Button } from "@/components/ui/button";
 import { InputField, SelectField, TextareaField } from "@/components/ui/field";
+import type { CategoryField } from "@/features/organization/schemas";
 import { initialActionState } from "@/server/action-state";
-
-export type CategoryField = {
-  key: string;
-  label: string;
-  type: "text" | "number" | "date" | "boolean";
-  required: boolean;
-};
 
 type CategoryValue = {
   id: string;

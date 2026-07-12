@@ -9,11 +9,12 @@ import {
 import type { Metadata } from "next";
 import Link from "next/link";
 
-import { CategoryForm, type CategoryField } from "@/components/organization/category-form";
+import { CategoryForm } from "@/components/organization/category-form";
 import { DepartmentForm } from "@/components/organization/department-form";
 import { EmployeeAccessForm } from "@/components/organization/employee-access-form";
 import { StatusBadge } from "@/components/ui/status-badge";
 import { getOrganizationSetupData } from "@/features/organization/service";
+import type { CategoryField } from "@/features/organization/schemas";
 import { Role } from "@/generated/prisma/enums";
 import { formatDate, humanizeEnum } from "@/lib/format";
 import { cn } from "@/lib/cn";
