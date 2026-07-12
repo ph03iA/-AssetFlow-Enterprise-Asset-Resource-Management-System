@@ -20,6 +20,13 @@
 # production
 /build
 
+# generated database client and local SQLite data
+/src/generated/prisma
+/data/*.db
+/data/*.db-journal
+/data/*.db-shm
+/data/*.db-wal
+
 # misc
 .DS_Store
 *.pem
