@@ -6,3 +6,135 @@ generator client {
 datasource db {
   provider = "sqlite"
 }
+
+enum Role {
+  ADMIN
+  ASSET_MANAGER
+  DEPARTMENT_HEAD
+  EMPLOYEE
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum MailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+model Organization {
+  id             String          @id @default(cuid())
+  name           String
+  slug           String          @unique
+  timezone       String          @default("Asia/Kolkata")
+  currency       String          @default("INR")
+  assetTagPrefix String          @default("AF")
+  users          User[]
+  departments    Department[]
+  categories     AssetCategory[]
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+}
+
+model Department {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name           String
+  code           String
+  description    String?
+  isActive       Boolean        @default(true)
+  parentId       String?
+  parent         Department?    @relation("DepartmentHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  children       Department[]   @relation("DepartmentHierarchy")
+  headId         String?        @unique
+  head           User?          @relation("DepartmentHead", fields: [headId], references: [id], onDelete: SetNull)
+  members        User[]         @relation("DepartmentMembers")
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@unique([organizationId, name])
+  @@unique([organizationId, code])
+  @@index([organizationId, isActive])
+  @@index([parentId])
+}
+
+model AssetCategory {
+  id               String       @id @default(cuid())
+  organizationId   String
+  organization     Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  name             String
+  description      String?
+  isActive         Boolean      @default(true)
+  fieldDefinitions String       @default("[]")
+  createdAt        DateTime     @default(now())
+  updatedAt        DateTime     @updatedAt
+
+  @@unique([organizationId, name])
+  @@index([organizationId, isActive])
+}
+
+model User {
+  id                  String               @id @default(cuid())
+  organizationId      String
+  organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  departmentId        String?
+  department          Department?          @relation("DepartmentMembers", fields: [departmentId], references: [id], onDelete: SetNull)
+  headedDepartment    Department?          @relation("DepartmentHead")
+  name                String
+  email               String               @unique
+  passwordHash        String
+  role                Role                 @default(EMPLOYEE)
+  status              UserStatus           @default(ACTIVE)
+  avatarColor         String               @default("slate")
+  sessions            Session[]
+  passwordResetTokens PasswordResetToken[]
+  mailOutbox           MailOutbox[]
+  lastLoginAt         DateTime?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+
+  @@index([organizationId, role, status])
+  @@index([departmentId])
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  tokenHash String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId, expiresAt])
+}
+
+model MailOutbox {
+  id        String     @id @default(cuid())
+  userId    String?
+  user      User?      @relation(fields: [userId], references: [id], onDelete: SetNull)
+  recipient String
+  subject   String
+  body      String
+  status    MailStatus @default(PENDING)
+  sentAt    DateTime?
+  createdAt DateTime   @default(now())
+
+  @@index([recipient, createdAt])
+  @@index([status, createdAt])
+}
