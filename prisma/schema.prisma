@@ -65,6 +65,29 @@ enum ReturnStatus {
   CANCELLED
 }
 
+enum BookingStatus {
+  UPCOMING
+  ONGOING
+  COMPLETED
+  CANCELLED
+}
+
+enum MaintenancePriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum MaintenanceStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  TECHNICIAN_ASSIGNED
+  IN_PROGRESS
+  RESOLVED
+}
+
 model Organization {
   id             String          @id @default(cuid())
   name           String
@@ -98,6 +121,7 @@ model Department {
   assets         Asset[]
   allocations    AssetAllocation[]
   transferTargets TransferRequest[]
+  bookings       ResourceBooking[]
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
@@ -148,6 +172,10 @@ model User {
   decidedTransfers     TransferRequest[]    @relation("TransferDecider")
   requestedReturns     ReturnRequest[]      @relation("ReturnRequester")
   decidedReturns       ReturnRequest[]      @relation("ReturnDecider")
+  bookings              ResourceBooking[]    @relation("BookingCreator")
+  requestedMaintenance MaintenanceRequest[] @relation("MaintenanceRequester")
+  approvedMaintenance  MaintenanceRequest[] @relation("MaintenanceApprover")
+  technicianWork       MaintenanceRequest[] @relation("MaintenanceTechnician")
   lastLoginAt         DateTime?
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @updatedAt
@@ -226,6 +254,8 @@ model Asset {
   statusHistory     AssetStatusHistory[]
   allocations       AssetAllocation[]
   transferRequests  TransferRequest[]
+  bookings          ResourceBooking[]
+  maintenanceRequests MaintenanceRequest[]
   createdAt         DateTime             @default(now())
   updatedAt         DateTime             @updatedAt
 
@@ -326,4 +356,61 @@ model ReturnRequest {
 
   @@index([allocationId, status])
   @@index([requestedById, status])
+}
+
+model ResourceBooking {
+  id                      String        @id @default(cuid())
+  assetId                 String
+  asset                   Asset         @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  bookedById              String
+  bookedBy                User          @relation("BookingCreator", fields: [bookedById], references: [id], onDelete: Restrict)
+  onBehalfOfDepartmentId  String?
+  onBehalfOfDepartment    Department?   @relation(fields: [onBehalfOfDepartmentId], references: [id], onDelete: Restrict)
+  purpose                 String
+  startAt                 DateTime
+  endAt                   DateTime
+  status                  BookingStatus @default(UPCOMING)
+  reminderSentAt          DateTime?
+  cancelledAt             DateTime?
+  cancellationReason      String?
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  @@index([assetId, startAt, endAt, status])
+  @@index([bookedById, startAt])
+  @@index([onBehalfOfDepartmentId, startAt])
+  @@index([status, startAt])
+}
+
+model MaintenanceRequest {
+  id                  String              @id @default(cuid())
+  assetId             String
+  asset               Asset               @relation(fields: [assetId], references: [id], onDelete: Restrict)
+  requestedById       String
+  requestedBy         User                @relation("MaintenanceRequester", fields: [requestedById], references: [id], onDelete: Restrict)
+  issue               String
+  priority            MaintenancePriority
+  status              MaintenanceStatus   @default(PENDING)
+  previousAssetStatus AssetStatus?
+  approvedById        String?
+  approvedBy          User?               @relation("MaintenanceApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt          DateTime?
+  rejectedAt          DateTime?
+  rejectionReason     String?
+  technicianId        String?
+  technician          User?               @relation("MaintenanceTechnician", fields: [technicianId], references: [id], onDelete: SetNull)
+  assignedAt          DateTime?
+  scheduledFor        DateTime?
+  dueAt               DateTime?
+  startedAt           DateTime?
+  resolvedAt          DateTime?
+  resolution          String?
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+
+  @@index([assetId, status])
+  @@index([requestedById, status])
+  @@index([technicianId, status])
+  @@index([scheduledFor, status])
+  @@index([dueAt, status])
 }
